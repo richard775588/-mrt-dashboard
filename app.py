@@ -481,16 +481,16 @@ with tab2:
             )
             st.plotly_chart(fig_map, use_container_width=True)
 
-        # ── 附近站點定位 ──────────────────────────────────────────────────────
-        st.markdown("<div class='section-header'>📍 離我最近的 YouBike 站點</div>", unsafe_allow_html=True)
+        # ── 綜合定位推薦 ─────────────────────────────────────────────────────
+        st.markdown("<div class='section-header'>📍 我的出行建議</div>", unsafe_allow_html=True)
         try:
             from streamlit_js_eval import get_geolocation
+
             if st.button("🔍 取得我的位置", use_container_width=True):
                 st.session_state["get_loc"] = True
 
             if st.session_state.get("get_loc"):
                 loc = get_geolocation()
-                # 相容不同版本的回傳格式
                 user_lat, user_lng = None, None
                 if loc and isinstance(loc, dict):
                     if "coords" in loc:
@@ -501,44 +501,119 @@ with tab2:
                         user_lng = loc.get("longitude")
 
                 if user_lat and user_lng:
-
                     def haversine(lat1, lng1, lat2, lng2):
                         R = 6371000
                         phi1, phi2 = math.radians(lat1), math.radians(lat2)
-                        dphi = math.radians(lat2 - lat1)
-                        dlam = math.radians(lng2 - lng1)
+                        dphi, dlam = math.radians(lat2-lat1), math.radians(lng2-lng1)
                         a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
                         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-                    if not df_youbike.empty:
-                        df_near = df_youbike.copy()
-                        df_near["距離(m)"] = df_near.apply(
-                            lambda r: haversine(user_lat, user_lng, r["lat"], r["lng"]), axis=1
-                        )
-                        df_near = df_near[df_near["lat"] != 0].sort_values("距離(m)").head(5)
+                    # ── 天氣資訊 ──────────────────────────────────────────────
+                    temp, precip, aqi_val, aqi_status, district = None, None, None, None, "未知"
+                    if not df_weather.empty:
+                        latest_w = df_weather.sort_values("fetched_at").iloc[-1]
+                        temp = latest_w["temperature"]
+                        precip = latest_w["precipitation"]
+                    if not df_aqi.empty:
+                        aqi_val = int(df_aqi["aqi"].mean())
+                        aqi_status = df_aqi.iloc[0]["status"]
 
-                        st.success(f"📍 你的位置：{user_lat:.5f}, {user_lng:.5f}")
-                        for _, row in df_near.iterrows():
-                            dist = int(row["距離(m)"])
-                            avail = int(row["available_bikes"])
-                            total = int(row["total_bikes"])
-                            slots = int(row["available_slots"])
-                            rate = avail / total * 100 if total > 0 else 0
-                            color = "#4ade80" if rate > 60 else ("#fbbf24" if rate > 20 else "#f87171")
-                            st.markdown(f"""
-                            <div style='background:#1a1d2e;border:1px solid #2a2d3e;border-radius:10px;
-                                        padding:12px 16px;margin-bottom:8px;'>
-                                <div style='font-weight:600;color:#e8eaf6;'>{row["station_name"]}</div>
-                                <div style='font-size:0.82rem;color:#8b8fa8;margin-top:2px;'>
-                                    📏 {dist} 公尺 &nbsp;｜&nbsp; 🏙️ {row["district"]}
-                                </div>
-                                <div style='margin-top:8px;display:flex;gap:16px;'>
-                                    <span style='color:{color};font-weight:700;font-size:1.1rem;'>🚲 可借 {avail}</span>
-                                    <span style='color:#7c9ef5;font-size:1.1rem;'>🅿️ 可還 {slots}</span>
-                                    <span style='color:#8b8fa8;font-size:0.9rem;'>共 {total} 格</span>
-                                </div>
+                    # ── 最近 YouBike 站 ───────────────────────────────────────
+                    nearest_yb, yb_dist = None, None
+                    if not df_youbike.empty:
+                        df_near = df_youbike[df_youbike["lat"] != 0].copy()
+                        df_near["dist"] = df_near.apply(
+                            lambda r: haversine(user_lat, user_lng, r["lat"], r["lng"]), axis=1)
+                        df_near = df_near.sort_values("dist")
+                        nearest_yb = df_near.iloc[0]
+                        yb_dist = int(nearest_yb["dist"])
+                        district = nearest_yb["district"]
+
+                    # ── 最近捷運站 ────────────────────────────────────────────
+                    nearest_mrt, mrt_dist = None, None
+                    mrt_coords = [(name, lat, lng) for name, (lat, lng) in STATION_COORDS.items()]
+                    if mrt_coords:
+                        mrt_dists = [(name, haversine(user_lat, user_lng, lat, lng))
+                                     for name, lat, lng in mrt_coords]
+                        nearest_mrt, mrt_dist = min(mrt_dists, key=lambda x: x[1])
+                        mrt_dist = int(mrt_dist)
+
+                    # ── 出行建議邏輯 ──────────────────────────────────────────
+                    rain = precip and precip > 1
+                    hot = temp and temp > 33
+                    bad_aqi = aqi_val and aqi_val > 100
+                    yb_ok = nearest_yb is not None and int(nearest_yb["available_bikes"]) >= 3
+
+                    if rain:
+                        suggestion = "🌧️ 現在有降雨，建議搭捷運為主"
+                        suggestion_color = "#60a5fa"
+                    elif bad_aqi:
+                        suggestion = "😷 空氣品質不佳，建議減少戶外騎乘"
+                        suggestion_color = "#f87171"
+                    elif hot:
+                        suggestion = "🥵 氣溫偏高，短程可騎 YouBike，長程建議搭捷運"
+                        suggestion_color = "#fbbf24"
+                    elif yb_ok:
+                        suggestion = "✅ 天氣良好，適合騎 YouBike！"
+                        suggestion_color = "#4ade80"
+                    else:
+                        suggestion = "🚇 附近 YouBike 車輛不足，建議搭捷運"
+                        suggestion_color = "#a78bfa"
+
+                    # ── 綜合推薦卡 ────────────────────────────────────────────
+                    temp_str = f"{temp:.0f}°C" if temp else "N/A"
+                    precip_str = f"{precip:.1f} mm" if precip is not None else "N/A"
+                    aqi_str = f"{aqi_val} {aqi_status}" if aqi_val else "N/A"
+                    yb_avail = int(nearest_yb["available_bikes"]) if nearest_yb is not None else 0
+                    yb_name = nearest_yb["station_name"] if nearest_yb is not None else "N/A"
+                    mrt_name = nearest_mrt or "N/A"
+
+                    st.markdown(f"""
+                    <div style='background:linear-gradient(135deg,#1a1d2e,#16192a);
+                                border:1px solid #2a2d3e;border-radius:14px;padding:20px;margin-bottom:16px;'>
+                        <div style='font-size:1.1rem;font-weight:700;color:{suggestion_color};margin-bottom:14px;'>
+                            {suggestion}
+                        </div>
+                        <div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:0.88rem;'>
+                            <div style='color:#8b8fa8;'>📍 所在區域</div>
+                            <div style='color:#e8eaf6;'>{district}</div>
+                            <div style='color:#8b8fa8;'>🌡️ 氣溫 / 降雨</div>
+                            <div style='color:#e8eaf6;'>{temp_str} &nbsp;／&nbsp; {precip_str}</div>
+                            <div style='color:#8b8fa8;'>🌬️ 空氣品質</div>
+                            <div style='color:#e8eaf6;'>{aqi_str}</div>
+                            <div style='color:#8b8fa8;'>🚲 最近 YouBike</div>
+                            <div style='color:#e8eaf6;'>{yb_name[:16]}<br>
+                                <span style='color:#4ade80;'>可借 {yb_avail} 輛</span>
+                                &nbsp;·&nbsp; {yb_dist} 公尺
                             </div>
-                            """, unsafe_allow_html=True)
+                            <div style='color:#8b8fa8;'>🚇 最近捷運站</div>
+                            <div style='color:#e8eaf6;'>{mrt_name} &nbsp;·&nbsp; {mrt_dist} 公尺</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # ── 最近 5 個 YouBike 站點 ────────────────────────────────
+                    st.markdown("<div style='font-size:0.9rem;color:#8b8fa8;margin-bottom:8px;'>附近 YouBike 站點</div>", unsafe_allow_html=True)
+                    for _, row in df_near.head(5).iterrows():
+                        dist = int(row["dist"])
+                        avail = int(row["available_bikes"])
+                        total = int(row["total_bikes"])
+                        slots = int(row["available_slots"])
+                        rate = avail / total * 100 if total > 0 else 0
+                        color = "#4ade80" if rate > 60 else ("#fbbf24" if rate > 20 else "#f87171")
+                        st.markdown(f"""
+                        <div style='background:#1a1d2e;border:1px solid #2a2d3e;border-radius:10px;
+                                    padding:10px 14px;margin-bottom:6px;'>
+                            <div style='font-weight:600;color:#e8eaf6;font-size:0.88rem;'>{row["station_name"]}</div>
+                            <div style='font-size:0.78rem;color:#8b8fa8;margin-top:2px;'>📏 {dist} 公尺 · {row["district"]}</div>
+                            <div style='margin-top:6px;display:flex;gap:14px;'>
+                                <span style='color:{color};font-weight:700;'>🚲 {avail}</span>
+                                <span style='color:#7c9ef5;'>🅿️ {slots}</span>
+                                <span style='color:#555870;font-size:0.8rem;'>共 {total}</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
                 elif loc is not None and "error" in loc:
                     code = loc["error"].get("code", 0)
                     if code == 1:
@@ -583,18 +658,6 @@ with tab2:
             )
             st.plotly_chart(fig_dist, use_container_width=True)
 
-            # Top low-stock stations
-            st.markdown("<div class='section-header'>⚠️ 車輛偏少站點</div>", unsafe_allow_html=True)
-            low = df_youbike[df_youbike["avail_rate"] < 20].sort_values("avail_rate").head(6)
-            for _, row in low.iterrows():
-                pct = row["avail_rate"]
-                st.markdown(f"""
-                <div style='display:flex;justify-content:space-between;
-                            padding:6px 0;border-bottom:1px solid #2a2d3e;font-size:0.82rem;'>
-                  <span style='color:#c5cae9'>{row['station_name'][:18]}</span>
-                  <span style='color:#f87171'>{row['available_bikes']:.0f} 輛 ({pct:.0f}%)</span>
-                </div>
-                """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
