@@ -143,14 +143,15 @@ with st.sidebar:
     st.markdown("## 🚇 Taipei Pulse 台北脈動")
     st.markdown("---")
 
-    st.markdown("### ⚙️ 控制面板")
+    st.markdown("### ⚙️ Settings")
     selected_lines = st.multiselect(
         "捷運路線篩選",
         options=list(COLOR_LINE.keys()),
         default=list(COLOR_LINE.keys()),
     )
 
-    year_range = st.slider("年份範圍", 2020, 2024, (2020, 2024))
+    _max_year = int(df_mrt["year"].max()) if not df_mrt.empty else 2026
+    year_range = st.slider("年份範圍", 2020, _max_year, (2020, _max_year))
 
     st.markdown("---")
 
