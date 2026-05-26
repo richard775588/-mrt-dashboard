@@ -554,6 +554,58 @@ with tab0:
                                     <div style='font-size:0.72rem;color:#4ade80;margin-top:4px;'>{badge}</div>
                                 </div>
                                 """, unsafe_allow_html=True)
+                        # ── 路線地圖 ──────────────────────────────────────────
+                        map_points = {
+                            "type":  ["📍 我的位置",  "🏁 目的地",   "🚇 最近捷運站", "🚲 最近 YouBike"],
+                            "name":  ["我的位置",     dest_name[:20], nearest_mrt or "N/A", nearest_yb["station_name"][:16] if nearest_yb is not None else "N/A"],
+                            "lat":   [user_lat,       dest_lat,       STATION_COORDS.get(nearest_mrt, (user_lat, user_lng))[0], nearest_yb["lat"] if nearest_yb is not None else user_lat],
+                            "lng":   [user_lng,       dest_lng,       STATION_COORDS.get(nearest_mrt, (user_lat, user_lng))[1], nearest_yb["lng"] if nearest_yb is not None else user_lng],
+                            "color": ["#60a5fa",      "#f87171",      "#7c9ef5",       "#4ade80"],
+                            "size":  [18, 18, 14, 14],
+                        }
+                        df_map = pd.DataFrame(map_points)
+
+                        fig_route = px.scatter_map(
+                            df_map, lat="lat", lon="lng",
+                            color="type",
+                            color_discrete_map={t: c for t, c in zip(map_points["type"], map_points["color"])},
+                            size="size", size_max=18,
+                            hover_name="name",
+                            zoom=13,
+                            center={"lat": (user_lat + dest_lat) / 2, "lon": (user_lng + dest_lng) / 2},
+                            map_style="carto-darkmatter",
+                            height=380,
+                        )
+                        # 連線：我的位置 → 捷運站 → 目的地
+                        mrt_lat = STATION_COORDS.get(nearest_mrt, (user_lat, user_lng))[0]
+                        mrt_lng = STATION_COORDS.get(nearest_mrt, (user_lat, user_lng))[1]
+                        fig_route.add_trace(go.Scattermap(
+                            lat=[user_lat, mrt_lat, dest_lat],
+                            lon=[user_lng, mrt_lng, dest_lng],
+                            mode="lines",
+                            line=dict(width=2, color="#7c9ef5"),
+                            name="捷運路線",
+                            showlegend=False,
+                            opacity=0.6,
+                        ))
+                        # 連線：我的位置 → YouBike → 目的地
+                        if nearest_yb is not None:
+                            fig_route.add_trace(go.Scattermap(
+                                lat=[user_lat, nearest_yb["lat"], dest_lat],
+                                lon=[user_lng, nearest_yb["lng"], dest_lng],
+                                mode="lines",
+                                line=dict(width=2, color="#4ade80"),
+                                name="YouBike 路線",
+                                showlegend=False,
+                                opacity=0.6,
+                            ))
+                        fig_route.update_layout(
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            margin=dict(l=0, r=0, t=0, b=0),
+                            legend=dict(font=dict(color="#c5cae9"), bgcolor="rgba(26,29,46,0.8)"),
+                        )
+                        st.plotly_chart(fig_route, use_container_width=True)
+
                     else:
                         st.warning("找不到目的地，請換個關鍵字試試")
 
