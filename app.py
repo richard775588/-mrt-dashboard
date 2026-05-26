@@ -475,6 +475,131 @@ with tab0:
                             </div>
                             """, unsafe_allow_html=True)
 
+                st.markdown("---")
+
+                # ── 通勤時間預測 ──────────────────────────────────────────────
+                st.markdown("<div class='section-header'>🧭 通勤時間預測</div>", unsafe_allow_html=True)
+                dest_input = st.text_input("輸入目的地（例如：台北101、台大、信義區）", key="dest_input")
+
+                if dest_input:
+                    with st.spinner("查詢目的地座標中…"):
+                        try:
+                            geo_r = _req.get(
+                                "https://nominatim.openstreetmap.org/search",
+                                params={"q": dest_input + " 台北", "format": "json", "limit": 1, "countrycodes": "tw"},
+                                headers={"User-Agent": "TaipeiPulse/1.0"}, timeout=8
+                            )
+                            geo_data = geo_r.json()
+                        except Exception:
+                            geo_data = []
+
+                    if geo_data:
+                        dest_lat = float(geo_data[0]["lat"])
+                        dest_lng = float(geo_data[0]["lon"])
+                        dest_name = geo_data[0].get("display_name", dest_input).split(",")[0]
+                        total_dist = haversine(user_lat, user_lng, dest_lat, dest_lng)
+
+                        # 步行速度 83m/min，YouBike 230m/min，MRT 580m/min，公車 280m/min
+                        walk_min = total_dist / 83
+
+                        # YouBike：走到最近站 + 騎車 + 抵達
+                        yb_walk = yb_dist if yb_dist else total_dist * 0.2
+                        yb_has_bike = nearest_yb is not None and int(nearest_yb["available_bikes"]) > 0
+                        yb_ride = max(0, total_dist - yb_walk) / 230
+                        yb_total = (yb_walk / 83 + yb_ride) if yb_has_bike else None
+
+                        # MRT：走到最近捷運站 + 搭車 + 走到目的地
+                        mrt_walk_origin = mrt_dist if mrt_dist else total_dist * 0.2
+                        dest_mrt = min(STATION_COORDS.items(),
+                                       key=lambda x: haversine(dest_lat, dest_lng, x[1][0], x[1][1]))
+                        dest_mrt_dist = haversine(dest_lat, dest_lng, dest_mrt[1][0], dest_mrt[1][1])
+                        mrt_ride_dist = haversine(
+                            STATION_COORDS.get(nearest_mrt, (user_lat, user_lng))[0],
+                            STATION_COORDS.get(nearest_mrt, (user_lat, user_lng))[1],
+                            dest_mrt[1][0], dest_mrt[1][1]
+                        ) if nearest_mrt else total_dist
+                        mrt_total = mrt_walk_origin / 83 + 3 + mrt_ride_dist / 580 + dest_mrt_dist / 83
+
+                        # 公車：粗估（距離 / 公車速度 + 等車時間）
+                        bus_total = total_dist / 280 + 6
+
+                        def fmt(mins):
+                            if mins is None: return "—"
+                            m = int(round(mins))
+                            return f"{m} 分鐘" if m < 60 else f"{m//60} 小時 {m%60} 分"
+
+                        modes = [
+                            ("🚶 步行", walk_min, "#8b8fa8", total_dist < 1500),
+                            ("🚲 YouBike", yb_total, "#4ade80", yb_has_bike and total_dist < 8000),
+                            ("🚇 捷運", mrt_total, "#7c9ef5", True),
+                            ("🚌 公車", bus_total, "#fbbf24", True),
+                        ]
+                        # 推薦最快且條件成立的
+                        valid = [(n, t, c, ok) for n, t, c, ok in modes if ok and t is not None]
+                        best = min(valid, key=lambda x: x[1])[0] if valid else None
+
+                        st.markdown(f"<div style='color:#8b8fa8;font-size:0.85rem;margin-bottom:12px;'>📍 {dest_name} · 直線距離 {total_dist/1000:.1f} km</div>", unsafe_allow_html=True)
+
+                        cols = st.columns(4)
+                        for i, (name, t, color, ok) in enumerate(modes):
+                            badge = "⭐ 推薦" if name == best else ""
+                            unavail = "" if ok and t is not None else "條件不符"
+                            with cols[i]:
+                                st.markdown(f"""
+                                <div style='background:#1a1d2e;border:1px solid {"#4ade80" if name==best else "#2a2d3e"};
+                                            border-radius:12px;padding:14px;text-align:center;'>
+                                    <div style='font-size:1.3rem;'>{name.split()[0]}</div>
+                                    <div style='font-size:0.82rem;color:#8b8fa8;margin:4px 0;'>{name.split()[1]}</div>
+                                    <div style='font-size:1.2rem;font-weight:700;color:{color};'>{fmt(t) if ok else "不適用"}</div>
+                                    <div style='font-size:0.72rem;color:#4ade80;margin-top:4px;'>{badge}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                    else:
+                        st.warning("找不到目的地，請換個關鍵字試試")
+
+                st.markdown("---")
+
+                # ── 附近即時公車 ──────────────────────────────────────────────
+                st.markdown("<div class='section-header'>🚌 附近即時公車</div>", unsafe_allow_html=True)
+                try:
+                    bus_r = _req.get(
+                        f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeNearStop/City/Taipei"
+                        f"?Lat={user_lat}&Lon={user_lng}&Distance=500&format=JSON",
+                        headers={"User-Agent": "Mozilla/5.0"}, timeout=8
+                    )
+                    buses = bus_r.json() if bus_r.status_code == 200 else []
+
+                    if isinstance(buses, list) and buses:
+                        # 只取 BusStatus=0（正常行駛）且 DutyStatus=1（執勤中）
+                        active = [b for b in buses if b.get("BusStatus") == 0 and b.get("DutyStatus") == 1]
+                        # 依路線分組，每條路線取最近站名
+                        from collections import defaultdict
+                        route_stops = defaultdict(set)
+                        for b in active:
+                            route = b["RouteName"]["Zh_tw"]
+                            stop = b["StopName"]["Zh_tw"]
+                            route_stops[route].add(stop)
+
+                        if route_stops:
+                            st.markdown(f"<div style='color:#8b8fa8;font-size:0.82rem;margin-bottom:10px;'>500 公尺內共有 {len(route_stops)} 條路線正在行駛</div>", unsafe_allow_html=True)
+                            bus_cols = st.columns(3)
+                            for i, (route, stops) in enumerate(sorted(route_stops.items())):
+                                stops_str = "、".join(list(stops)[:2])
+                                with bus_cols[i % 3]:
+                                    st.markdown(f"""
+                                    <div style='background:#1a1d2e;border:1px solid #2a2d3e;border-radius:10px;
+                                                padding:10px 12px;margin-bottom:8px;'>
+                                        <span style='color:#fbbf24;font-weight:700;font-size:1rem;'>{route} 路</span>
+                                        <div style='color:#8b8fa8;font-size:0.75rem;margin-top:4px;'>📍 {stops_str}</div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        else:
+                            st.info("目前附近 500 公尺內無公車行駛")
+                    else:
+                        st.info("目前附近無即時公車資料")
+                except Exception as e:
+                    st.warning(f"公車資料暫時無法取得：{e}")
+
             elif loc is not None and "error" in loc:
                 code = loc["error"].get("code", 0)
                 if code == 1:
