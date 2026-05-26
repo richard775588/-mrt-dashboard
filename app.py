@@ -345,14 +345,45 @@ with tab0:
                     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
                     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
+                # ── 依定位抓即時天氣 ──────────────────────────────────────
+                import requests as _req
                 temp, precip, aqi_val, aqi_status, district = None, None, None, None, "未知"
-                if not df_weather.empty:
-                    latest_w = df_weather.sort_values("fetched_at").iloc[-1]
-                    temp = latest_w["temperature"]
-                    precip = latest_w["precipitation"]
+                try:
+                    w_url = (
+                        f"https://api.open-meteo.com/v1/forecast"
+                        f"?latitude={user_lat}&longitude={user_lng}"
+                        f"&current=temperature_2m,precipitation,weathercode"
+                        f"&timezone=Asia/Taipei"
+                    )
+                    wr = _req.get(w_url, timeout=8)
+                    if wr.status_code == 200:
+                        wdata = wr.json()["current"]
+                        temp = wdata["temperature_2m"]
+                        precip = wdata["precipitation"]
+                except Exception:
+                    if not df_weather.empty:
+                        latest_w = df_weather.sort_values("fetched_at").iloc[-1]
+                        temp = latest_w["temperature"]
+                        precip = latest_w["precipitation"]
+
+                # ── 依定位找最近 AQI 測站 ────────────────────────────────────
+                AQI_STATION_COORDS = {
+                    "中山": (25.0630, 121.5244), "松山": (25.0497, 121.5779),
+                    "大同": (25.0633, 121.5130), "萬華": (25.0338, 121.4997),
+                    "信義": (25.0322, 121.5678), "士林": (25.0938, 121.5258),
+                    "北投": (25.1313, 121.4989), "內湖": (25.0830, 121.5872),
+                    "南港": (25.0549, 121.6077), "木柵": (25.0000, 121.5667),
+                }
                 if not df_aqi.empty:
-                    aqi_val = int(df_aqi["aqi"].mean())
-                    aqi_status = df_aqi.iloc[0]["status"]
+                    nearest_aqi_station = min(
+                        AQI_STATION_COORDS.items(),
+                        key=lambda x: haversine(user_lat, user_lng, x[1][0], x[1][1])
+                    )[0]
+                    aqi_row = df_aqi[df_aqi["station"] == nearest_aqi_station]
+                    if aqi_row.empty:
+                        aqi_row = df_aqi
+                    aqi_val = int(aqi_row.iloc[0]["aqi"])
+                    aqi_status = aqi_row.iloc[0]["status"]
 
                 nearest_yb, yb_dist, df_near = None, None, None
                 if not df_youbike.empty:
