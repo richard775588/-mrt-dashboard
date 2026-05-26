@@ -1,5 +1,5 @@
 """
-台北城市移動行為分析儀表板
+Taipei Pulse 台北脈動
 Taipei Urban Mobility Dashboard
 """
 
@@ -23,7 +23,7 @@ start_scheduler()
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="台北城市移動儀表板",
+    page_title="Taipei Pulse 台北脈動",
     page_icon="🚇",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -140,7 +140,7 @@ COLOR_LINE = {
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🚇 台北城市移動儀表板")
+    st.markdown("## 🚇 Taipei Pulse 台北脈動")
     st.markdown("---")
 
     st.markdown("### ⚙️ 控制面板")
@@ -202,7 +202,7 @@ df_mrt_f = df_mrt[
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style='text-align:center; padding: 8px 0 4px 0;'>
-  <div style='font-size:2.4rem; font-weight:800; color:#e8eaf6;'>🚇 台北城市移動行為分析</div>
+  <div style='font-size:2.4rem; font-weight:800; color:#e8eaf6;'>🚇 Taipei Pulse 台北脈動</div>
   <div style='font-size:1rem; color:#8b8fa8; margin-top:4px;'>整合捷運客流 · YouBike · 天氣 · 空品的城市脈動儀表板</div>
   <div style='font-size:0.75rem; color:#555870; margin-top:6px;'>最後更新：{}</div>
 </div>
@@ -819,7 +819,7 @@ with tab5:
     st.markdown("---")
     st.markdown("""
     <div style='text-align:center;color:#555870;font-size:0.78rem;padding:16px 0;'>
-      台北城市移動行為分析儀表板 ·
+      Taipei Pulse 台北脈動 ·
       資料來源：台北捷運開放資料 / YouBike 2.0 / Open-Meteo / 環保署 AQI ·
       ETL Pipeline 每 5 分鐘自動刷新
     </div>
