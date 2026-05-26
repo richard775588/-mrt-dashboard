@@ -150,7 +150,7 @@ with st.sidebar:
         default=list(COLOR_LINE.keys()),
     )
 
-    _max_year = int(df_mrt["year"].max()) if not df_mrt.empty else 2026
+    _max_year = datetime.now().year
     year_range = st.slider("年份範圍", 2020, _max_year, (2020, _max_year))
 
     st.markdown("---")
