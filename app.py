@@ -490,9 +490,17 @@ with tab2:
 
             if st.session_state.get("get_loc"):
                 loc = get_geolocation()
-                if loc and isinstance(loc, dict) and "coords" in loc:
-                    user_lat = loc["coords"]["latitude"]
-                    user_lng = loc["coords"]["longitude"]
+                # 相容不同版本的回傳格式
+                user_lat, user_lng = None, None
+                if loc and isinstance(loc, dict):
+                    if "coords" in loc:
+                        user_lat = loc["coords"].get("latitude")
+                        user_lng = loc["coords"].get("longitude")
+                    elif "latitude" in loc:
+                        user_lat = loc.get("latitude")
+                        user_lng = loc.get("longitude")
+
+                if user_lat and user_lng:
 
                     def haversine(lat1, lng1, lat2, lng2):
                         R = 6371000
@@ -532,7 +540,9 @@ with tab2:
                             </div>
                             """, unsafe_allow_html=True)
                 elif loc is not None:
-                    st.warning("無法取得位置，請確認已允許瀏覽器存取位置權限。")
+                    st.warning(f"無法解析位置資料，回傳內容：{loc}")
+                else:
+                    st.info("⏳ 等待定位中，請允許瀏覽器存取位置權限…")
         except ImportError:
             st.info("請安裝 streamlit-js-eval 套件以啟用定位功能")
 
