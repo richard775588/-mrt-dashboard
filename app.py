@@ -559,72 +559,104 @@ with tab0:
 
                 st.markdown("---")
 
-                # ── 附近即時公車（最近站點） ──────────────────────────────────
+                # ── 附近公車站列表 + 即時時刻 ─────────────────────────────────
                 st.markdown("<div class='section-header'>🚌 附近公車站即時時刻</div>", unsafe_allow_html=True)
                 try:
-                    from collections import Counter
+                    # Step 1: 取附近公車找出站點 UID
                     bus_r = _req.get(
                         f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeNearStop/City/Taipei"
-                        f"?Lat={user_lat}&Lon={user_lng}&Distance=400&format=JSON",
+                        f"?Lat={user_lat}&Lon={user_lng}&Distance=600&format=JSON",
                         headers={"User-Agent": "Mozilla/5.0"}, timeout=8
                     )
                     buses = bus_r.json() if bus_r.status_code == 200 else []
                     active = [b for b in buses if b.get("DutyStatus") == 1] if isinstance(buses, list) else []
 
                     if active:
-                        # 找出最多公車匯集的站（= 最近最熱鬧的站）
-                        stop_counts = Counter(
-                            (b["StopUID"], b["StopName"]["Zh_tw"]) for b in active
-                        )
-                        top_uid, top_name = stop_counts.most_common(1)[0][0]
+                        # 取不重複的站點 UID（保留順序）
+                        seen, stop_uid_list = set(), []
+                        for b in active:
+                            uid = b["StopUID"]
+                            if uid not in seen:
+                                seen.add(uid)
+                                stop_uid_list.append((uid, b["StopName"]["Zh_tw"]))
+                        stop_uid_list = stop_uid_list[:10]  # 最多取 10 個候選
 
-                        # 查該站所有路線的 ETA
-                        eta_r = _req.get(
-                            f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei"
-                            f"?format=JSON&$filter=StopUID eq '{top_uid}'",
+                        # Step 2: 查這些站的座標，算距離排序取前 5
+                        filter_str = " or ".join(f"StopUID eq '{uid}'" for uid, _ in stop_uid_list)
+                        coord_r = _req.get(
+                            f"https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/City/Taipei"
+                            f"?format=JSON&$filter={filter_str}",
                             headers={"User-Agent": "Mozilla/5.0"}, timeout=8
                         )
-                        eta_data = eta_r.json() if eta_r.status_code == 200 else []
+                        coord_data = coord_r.json() if coord_r.status_code == 200 else []
 
-                        if isinstance(eta_data, list) and eta_data:
-                            # 只留 StopStatus=0（正常）且有 EstimateTime 的
-                            valid_eta = [
-                                e for e in eta_data
-                                if e.get("StopStatus") == 0 and e.get("EstimateTime") is not None
-                            ]
-                            valid_eta.sort(key=lambda x: x["EstimateTime"])
+                        # 建立 UID → 座標 & 名稱 map
+                        stop_info = {}
+                        for s in coord_data:
+                            uid = s["StopUID"]
+                            pos = s.get("StopPosition", {})
+                            slat = pos.get("PositionLat")
+                            slng = pos.get("PositionLon")
+                            name = s["StopName"]["Zh_tw"]
+                            if slat and slng:
+                                dist = int(haversine(user_lat, user_lng, slat, slng))
+                                stop_info[uid] = {"name": name, "dist": dist}
 
-                            st.markdown(f"<div style='color:#8b8fa8;font-size:0.85rem;margin-bottom:10px;'>📍 最近站：<b style='color:#e8eaf6;'>{top_name}</b></div>", unsafe_allow_html=True)
+                        # 依距離排序，取最近 5 站
+                        nearest_stops = sorted(stop_info.items(), key=lambda x: x[1]["dist"])[:5]
 
-                            if valid_eta:
-                                bus_cols = st.columns(3)
-                                for i, e in enumerate(valid_eta[:9]):
-                                    sec = e["EstimateTime"]
-                                    route = e["RouteName"]["Zh_tw"]
-                                    if sec < 60:
-                                        arrive = "即將進站"
-                                        t_color = "#f87171"
-                                    elif sec < 180:
-                                        arrive = f"{sec//60} 分內到"
-                                        t_color = "#fbbf24"
-                                    else:
-                                        arrive = f"{sec//60} 分鐘"
-                                        t_color = "#4ade80"
-                                    with bus_cols[i % 3]:
+                        if nearest_stops:
+                            st.markdown("<div style='color:#8b8fa8;font-size:0.82rem;margin-bottom:10px;'>點選站點查看即時時刻</div>", unsafe_allow_html=True)
+
+                            # 顯示站點按鈕
+                            for uid, info in nearest_stops:
+                                selected = st.session_state.get("bus_stop_uid") == uid
+                                label = f"{'▶ ' if selected else ''}📍 {info['name']}  ·  {info['dist']} 公尺"
+                                if st.button(label, key=f"bstop_{uid}", use_container_width=True):
+                                    st.session_state["bus_stop_uid"] = uid
+                                    st.session_state["bus_stop_name"] = info["name"]
+                                    st.rerun()
+
+                            # 顯示選中站點的 ETA
+                            sel_uid = st.session_state.get("bus_stop_uid")
+                            sel_name = st.session_state.get("bus_stop_name", "")
+                            if sel_uid:
+                                eta_r = _req.get(
+                                    f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei"
+                                    f"?format=JSON&$filter=StopUID eq '{sel_uid}'",
+                                    headers={"User-Agent": "Mozilla/5.0"}, timeout=8
+                                )
+                                eta_data = eta_r.json() if eta_r.status_code == 200 else []
+                                valid_eta = sorted(
+                                    [e for e in eta_data if e.get("StopStatus") == 0 and e.get("EstimateTime") is not None],
+                                    key=lambda x: x["EstimateTime"]
+                                )[:7]
+
+                                st.markdown(f"<div style='margin-top:12px;'><b style='color:#e8eaf6;'>🚏 {sel_name}</b></div>", unsafe_allow_html=True)
+                                if valid_eta:
+                                    for e in valid_eta:
+                                        sec = e["EstimateTime"]
+                                        route = e["RouteName"]["Zh_tw"]
+                                        if sec < 60:
+                                            arrive, t_color = "即將進站", "#f87171"
+                                        elif sec < 180:
+                                            arrive, t_color = f"{sec//60} 分內到", "#fbbf24"
+                                        else:
+                                            arrive, t_color = f"{sec//60} 分鐘", "#4ade80"
                                         st.markdown(f"""
-                                        <div style='background:#1a1d2e;border:1px solid #2a2d3e;
-                                                    border-radius:10px;padding:10px 12px;margin-bottom:8px;
+                                        <div style='background:#1a1d2e;border:1px solid #2a2d3e;border-radius:10px;
+                                                    padding:10px 14px;margin-bottom:6px;
                                                     display:flex;justify-content:space-between;align-items:center;'>
-                                            <span style='color:#fbbf24;font-weight:700;font-size:1rem;'>{route}</span>
-                                            <span style='color:{t_color};font-size:0.85rem;font-weight:600;'>{arrive}</span>
+                                            <span style='color:#fbbf24;font-weight:700;font-size:1rem;'>{route} 路</span>
+                                            <span style='color:{t_color};font-weight:600;'>{arrive}</span>
                                         </div>
                                         """, unsafe_allow_html=True)
-                            else:
-                                st.info("目前該站無即將到站的公車")
+                                else:
+                                    st.info("目前該站無即將到站的公車")
                         else:
-                            st.info("目前該站無時刻資料")
+                            st.info("無法取得附近站點資訊")
                     else:
-                        st.info("附近 400 公尺內目前無公車行駛")
+                        st.info("附近 600 公尺內目前無公車行駛")
                 except Exception as e:
                     st.warning(f"公車資料暫時無法取得：{e}")
 
