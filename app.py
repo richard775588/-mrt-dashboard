@@ -559,44 +559,72 @@ with tab0:
 
                 st.markdown("---")
 
-                # ── 附近即時公車 ──────────────────────────────────────────────
-                st.markdown("<div class='section-header'>🚌 附近即時公車</div>", unsafe_allow_html=True)
+                # ── 附近即時公車（最近站點） ──────────────────────────────────
+                st.markdown("<div class='section-header'>🚌 附近公車站即時時刻</div>", unsafe_allow_html=True)
                 try:
+                    from collections import Counter
                     bus_r = _req.get(
                         f"https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeNearStop/City/Taipei"
-                        f"?Lat={user_lat}&Lon={user_lng}&Distance=500&format=JSON",
+                        f"?Lat={user_lat}&Lon={user_lng}&Distance=400&format=JSON",
                         headers={"User-Agent": "Mozilla/5.0"}, timeout=8
                     )
                     buses = bus_r.json() if bus_r.status_code == 200 else []
+                    active = [b for b in buses if b.get("DutyStatus") == 1] if isinstance(buses, list) else []
 
-                    if isinstance(buses, list) and buses:
-                        # 只取 BusStatus=0（正常行駛）且 DutyStatus=1（執勤中）
-                        active = [b for b in buses if b.get("BusStatus") == 0 and b.get("DutyStatus") == 1]
-                        # 依路線分組，每條路線取最近站名
-                        from collections import defaultdict
-                        route_stops = defaultdict(set)
-                        for b in active:
-                            route = b["RouteName"]["Zh_tw"]
-                            stop = b["StopName"]["Zh_tw"]
-                            route_stops[route].add(stop)
+                    if active:
+                        # 找出最多公車匯集的站（= 最近最熱鬧的站）
+                        stop_counts = Counter(
+                            (b["StopUID"], b["StopName"]["Zh_tw"]) for b in active
+                        )
+                        top_uid, top_name = stop_counts.most_common(1)[0][0]
 
-                        if route_stops:
-                            st.markdown(f"<div style='color:#8b8fa8;font-size:0.82rem;margin-bottom:10px;'>500 公尺內共有 {len(route_stops)} 條路線正在行駛</div>", unsafe_allow_html=True)
-                            bus_cols = st.columns(3)
-                            for i, (route, stops) in enumerate(sorted(route_stops.items())):
-                                stops_str = "、".join(list(stops)[:2])
-                                with bus_cols[i % 3]:
-                                    st.markdown(f"""
-                                    <div style='background:#1a1d2e;border:1px solid #2a2d3e;border-radius:10px;
-                                                padding:10px 12px;margin-bottom:8px;'>
-                                        <span style='color:#fbbf24;font-weight:700;font-size:1rem;'>{route} 路</span>
-                                        <div style='color:#8b8fa8;font-size:0.75rem;margin-top:4px;'>📍 {stops_str}</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                        # 查該站所有路線的 ETA
+                        eta_r = _req.get(
+                            f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Taipei"
+                            f"?format=JSON&$filter=StopUID eq '{top_uid}'",
+                            headers={"User-Agent": "Mozilla/5.0"}, timeout=8
+                        )
+                        eta_data = eta_r.json() if eta_r.status_code == 200 else []
+
+                        if isinstance(eta_data, list) and eta_data:
+                            # 只留 StopStatus=0（正常）且有 EstimateTime 的
+                            valid_eta = [
+                                e for e in eta_data
+                                if e.get("StopStatus") == 0 and e.get("EstimateTime") is not None
+                            ]
+                            valid_eta.sort(key=lambda x: x["EstimateTime"])
+
+                            st.markdown(f"<div style='color:#8b8fa8;font-size:0.85rem;margin-bottom:10px;'>📍 最近站：<b style='color:#e8eaf6;'>{top_name}</b></div>", unsafe_allow_html=True)
+
+                            if valid_eta:
+                                bus_cols = st.columns(3)
+                                for i, e in enumerate(valid_eta[:9]):
+                                    sec = e["EstimateTime"]
+                                    route = e["RouteName"]["Zh_tw"]
+                                    if sec < 60:
+                                        arrive = "即將進站"
+                                        t_color = "#f87171"
+                                    elif sec < 180:
+                                        arrive = f"{sec//60} 分內到"
+                                        t_color = "#fbbf24"
+                                    else:
+                                        arrive = f"{sec//60} 分鐘"
+                                        t_color = "#4ade80"
+                                    with bus_cols[i % 3]:
+                                        st.markdown(f"""
+                                        <div style='background:#1a1d2e;border:1px solid #2a2d3e;
+                                                    border-radius:10px;padding:10px 12px;margin-bottom:8px;
+                                                    display:flex;justify-content:space-between;align-items:center;'>
+                                            <span style='color:#fbbf24;font-weight:700;font-size:1rem;'>{route}</span>
+                                            <span style='color:{t_color};font-size:0.85rem;font-weight:600;'>{arrive}</span>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                            else:
+                                st.info("目前該站無即將到站的公車")
                         else:
-                            st.info("目前附近 500 公尺內無公車行駛")
+                            st.info("目前該站無時刻資料")
                     else:
-                        st.info("目前附近無即時公車資料")
+                        st.info("附近 400 公尺內目前無公車行駛")
                 except Exception as e:
                     st.warning(f"公車資料暫時無法取得：{e}")
 
