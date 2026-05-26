@@ -12,6 +12,7 @@ import sqlite3
 import os
 import sys
 from datetime import datetime, timedelta
+import math
 
 # Add parent path for imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -479,6 +480,61 @@ with tab2:
                 )
             )
             st.plotly_chart(fig_map, use_container_width=True)
+
+        # ── 附近站點定位 ──────────────────────────────────────────────────────
+        st.markdown("<div class='section-header'>📍 離我最近的 YouBike 站點</div>", unsafe_allow_html=True)
+        try:
+            from streamlit_js_eval import get_geolocation
+            if st.button("🔍 取得我的位置", use_container_width=True):
+                st.session_state["get_loc"] = True
+
+            if st.session_state.get("get_loc"):
+                loc = get_geolocation()
+                if loc and isinstance(loc, dict) and "coords" in loc:
+                    user_lat = loc["coords"]["latitude"]
+                    user_lng = loc["coords"]["longitude"]
+
+                    def haversine(lat1, lng1, lat2, lng2):
+                        R = 6371000
+                        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+                        dphi = math.radians(lat2 - lat1)
+                        dlam = math.radians(lng2 - lng1)
+                        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+                        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+                    if not df_youbike.empty:
+                        df_near = df_youbike.copy()
+                        df_near["距離(m)"] = df_near.apply(
+                            lambda r: haversine(user_lat, user_lng, r["lat"], r["lng"]), axis=1
+                        )
+                        df_near = df_near[df_near["lat"] != 0].sort_values("距離(m)").head(5)
+
+                        st.success(f"📍 你的位置：{user_lat:.5f}, {user_lng:.5f}")
+                        for _, row in df_near.iterrows():
+                            dist = int(row["距離(m)"])
+                            avail = int(row["available_bikes"])
+                            total = int(row["total_bikes"])
+                            slots = int(row["available_slots"])
+                            rate = avail / total * 100 if total > 0 else 0
+                            color = "#4ade80" if rate > 60 else ("#fbbf24" if rate > 20 else "#f87171")
+                            st.markdown(f"""
+                            <div style='background:#1a1d2e;border:1px solid #2a2d3e;border-radius:10px;
+                                        padding:12px 16px;margin-bottom:8px;'>
+                                <div style='font-weight:600;color:#e8eaf6;'>{row["station_name"]}</div>
+                                <div style='font-size:0.82rem;color:#8b8fa8;margin-top:2px;'>
+                                    📏 {dist} 公尺 &nbsp;｜&nbsp; 🏙️ {row["district"]}
+                                </div>
+                                <div style='margin-top:8px;display:flex;gap:16px;'>
+                                    <span style='color:{color};font-weight:700;font-size:1.1rem;'>🚲 可借 {avail}</span>
+                                    <span style='color:#7c9ef5;font-size:1.1rem;'>🅿️ 可還 {slots}</span>
+                                    <span style='color:#8b8fa8;font-size:0.9rem;'>共 {total} 格</span>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                elif loc is not None:
+                    st.warning("無法取得位置，請確認已允許瀏覽器存取位置權限。")
+        except ImportError:
+            st.info("請安裝 streamlit-js-eval 套件以啟用定位功能")
 
     with col_info:
         st.markdown("<div class='section-header'>各行政區 YouBike 統計</div>", unsafe_allow_html=True)

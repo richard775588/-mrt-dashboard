@@ -8,3 +8,4 @@ apscheduler>=3.10.4
 sqlalchemy>=2.0.30
 statsmodels>=0.14.0
 scipy>=1.13.0
+streamlit-js-eval>=0.1.7
