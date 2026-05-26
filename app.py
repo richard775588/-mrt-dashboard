@@ -539,8 +539,14 @@ with tab2:
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
-                elif loc is not None:
-                    st.warning(f"無法解析位置資料，回傳內容：{loc}")
+                elif loc is not None and "error" in loc:
+                    code = loc["error"].get("code", 0)
+                    if code == 1:
+                        st.warning("❌ 位置權限被拒絕。請點瀏覽器網址列左側的 🔒 圖示 → 位置 → 允許，然後重新整理頁面再試。")
+                    elif code == 2:
+                        st.warning("❌ 無法取得位置訊號，請確認裝置已開啟 GPS 或網路定位。")
+                    else:
+                        st.warning(f"❌ 定位失敗：{loc['error'].get('message', '未知錯誤')}")
                 else:
                     st.info("⏳ 等待定位中，請允許瀏覽器存取位置權限…")
         except ImportError:
